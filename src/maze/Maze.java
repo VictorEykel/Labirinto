@@ -1,6 +1,6 @@
 package maze;
 
-import models.*;
+import models.Mouse;
 import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -15,15 +15,13 @@ public class Maze {
     private int[][] matrix;
     private int width;
     private int height;
-    private int startX, startY;
     private int endX, endY;
-    private int mouseX, mouseY; // Posição atual do mouse
     private Random random;
 
-    // Controle de pathfinding
-    private Set<String> visitedPositions = new HashSet<>();
-    private Stack<int[]> pathStack = new Stack<>();
+    // Controle de múltiplos ratos
+    private List<Mouse> mice = new ArrayList<>();
     private boolean gameRunning = true;
+    private ScheduledExecutorService executor;
 
     /**
      * Construtor da classe Maze
@@ -37,69 +35,53 @@ public class Maze {
         // Define posição de saída fixa
         this.endX = width - 2;
         this.endY = height - 1;
-
-        // Define posição inicial aleatória
-        setRandomStartPosition();
     }
 
     /**
-     * Define uma posição inicial aleatória válida para o mouse
+     * Adiciona um rato ao labirinto
      */
-    private void setRandomStartPosition() {
-        List<int[]> validPositions = new ArrayList<>();
+    public void addMouse() {
+        Mouse mouse = new Mouse(mice.size(), this);
+        mice.add(mouse);
+        System.out.println("➕ Adicionado rato " + mouse.getId() + " (" + mouse.getSymbol() + ")");
+    }
 
-        // Encontra todas as posições válidas no labirinto
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                if (matrix[y][x] == PATH && !(x == endX && y == endY)) {
-                    validPositions.add(new int[]{x, y});
-                }
-            }
+    /**
+     * Adiciona múltiplos ratos ao labirinto
+     */
+    public void addMice(int count) {
+        for (int i = 0; i < count; i++) {
+            addMouse();
         }
-
-        if (!validPositions.isEmpty()) {
-            int randomIndex = random.nextInt(validPositions.size());
-            int[] chosenPosition = validPositions.get(randomIndex);
-
-            this.startX = chosenPosition[1];
-            this.startY = chosenPosition[1];
-            this.mouseX = this.startX;
-            this.mouseY = this.startY;
-
-            System.out.println("🐭 Mouse apareceu em: (" + startX + ", " + startY + ")");
-        } else {
-            // Fallback para posição padrão
-            this.startX = 1;
-            this.startY = 1;
-            this.mouseX = this.startX;
-            this.mouseY = this.startY;
-            System.out.println("⚠️ Usando posição padrão: (" + startX + ", " + startY + ")");
-        }
+        System.out.println("🐭 Total de " + mice.size() + " ratos no labirinto!");
     }
 
     /**
      * Método principal de renderização/movimento
      */
     public void onRender() {
-        if (!gameRunning) return;
+        if (!gameRunning || mice.isEmpty()) return;
 
-        // Verifica se chegou ao destino
-        if (mouseX == endX && mouseY == endY) {
-            System.out.println("🎉 PARABÉNS! Mouse chegou ao destino!");
-            gameRunning = false;
-
-            return;
+        // Move todos os ratos em paralelo
+        for (Mouse mouse : mice) {
+            if (!mouse.hasReachedEnd()) {
+                mouse.move();
+            }
         }
 
-        // Busca próximo movimento
-        int[] nextMove = getNextMove();
-
-        if (nextMove != null) {
-            mouseX = nextMove[0];
-            mouseY = nextMove[1];
-            System.out.println("🐭 Mouse moveu para: (" + mouseX + ", " + mouseY + ")");
-        } else {
-            System.out.println("🚫 Sem movimentos válidos! Reiniciando...");
+        // Verifica se algum rato chegou ao destino
+        for (Mouse mouse : mice) {
+            if (mouse.hasReachedEnd()) {
+                // Aguarda 3 segundos e reinicia o rato
+                Timer timer = new Timer();
+                timer.schedule(new TimerTask() {
+                    @Override
+                    public void run() {
+                        mouse.restart();
+                        System.out.println("🔄 Rato " + mouse.getId() + " reiniciado!");
+                    }
+                }, 3000);
+            }
         }
 
         // Exibe o labirinto atualizado
@@ -107,90 +89,27 @@ public class Maze {
     }
 
     /**
-     * Algoritmo de pathfinding melhorado
-     */
-    private int[] getNextMove() {
-        String currentPos = mouseX + "," + mouseY;
-
-        // Adiciona posição atual ao histórico
-        if (!visitedPositions.contains(currentPos)) {
-            visitedPositions.add(currentPos);
-            pathStack.push(new int[]{mouseX, mouseY});
-        }
-
-        // Direções: Norte, Sul, Leste, Oeste
-        int[][] directions = {{0, -1}, {0, 1}, {1, 0}, {-1, 0}};
-        List<int[]> validMoves = new ArrayList<>();
-
-        // Verifica cada direção
-        for (int[] dir : directions) {
-            int newX = mouseX + dir[0];
-            int newY = mouseY + dir[1];
-            String newPos = newX + "," + newY;
-
-            // Verifica se é posição válida e não visitada
-            if (isValidPosition(newX, newY) && !visitedPositions.contains(newPos)) {
-                validMoves.add(new int[]{newX, newY});
-            }
-        }
-
-        // Se há movimentos válidos, escolhe o melhor (mais próximo do destino)
-        if (!validMoves.isEmpty()) {
-            validMoves.sort((pos1, pos2) -> {
-                int dist1 = Math.abs(pos1[0] - endX) + Math.abs(pos1[1] - endY);
-                int dist2 = Math.abs(pos2[0] - endX) + Math.abs(pos2[1] - endY);
-                return Integer.compare(dist1, dist2);
-            });
-            return validMoves.get(0);
-        }
-
-        // Se não há movimentos válidos, faz backtracking
-        return doBacktracking();
-    }
-
-    /**
-     * Implementa backtracking quando não há movimentos válidos
-     */
-    private int[] doBacktracking() {
-        System.out.println("🔄 Fazendo backtracking...");
-
-        // Remove posição atual
-        if (!pathStack.isEmpty()) {
-            pathStack.pop();
-        }
-
-        // Procura posição anterior com movimentos válidos
-        while (!pathStack.isEmpty()) {
-            int[] backPos = pathStack.peek();
-            int backX = backPos[0];
-            int backY = backPos[1];
-
-            // Verifica se tem movimentos não explorados desta posição
-            int[][] directions = {{0, -1}, {0, 1}, {1, 0}, {-1, 0}};
-            for (int[] dir : directions) {
-                int checkX = backX + dir[0];
-                int checkY = backY + dir[1];
-                String checkPos = checkX + "," + checkY;
-
-                if (isValidPosition(checkX, checkY) && !visitedPositions.contains(checkPos)) {
-                    System.out.println("🔙 Voltando para: (" + backX + ", " + backY + ")");
-                    return new int[]{backX, backY};
-                }
-            }
-
-            // Remove esta posição se não tem movimentos válidos
-            pathStack.pop();
-        }
-
-        return null; // Não encontrou caminho
-    }
-
-    /**
      * Inicia o jogo com velocidade especificada
      */
     public void play(int velocityMs) {
-        final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+        if (mice.isEmpty()) {
+            System.out.println("⚠️ Adicione pelo menos um rato antes de iniciar!");
+            return;
+        }
+
+        System.out.println("🎮 Iniciando simulação com " + mice.size() + " ratos...");
+        executor = Executors.newSingleThreadScheduledExecutor();
         executor.scheduleAtFixedRate(this::onRender, 0, velocityMs, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Para a simulação
+     */
+    public void stop() {
+        gameRunning = false;
+        if (executor != null && !executor.isShutdown()) {
+            executor.shutdown();
+        }
     }
 
     /**
@@ -202,23 +121,39 @@ public class Maze {
             System.out.println();
         }
 
-        System.out.println("=== LABIRINTO ===");
-        System.out.println("█ = Parede | · = Caminho | * = Início | # = Saída | @ = Mouse");
+        System.out.println("=== LABIRINTO COM MÚLTIPLOS RATOS ===");
+        System.out.println("█ = Parede | · = Caminho | # = Saída");
+
+        // Mostra informações dos ratos
+        System.out.print("Ratos ativos: ");
+        for (Mouse mouse : mice) {
+            if (!mouse.hasReachedEnd()) {
+                System.out.print(mouse.getSymbol() + "(ID:" + mouse.getId() + ") ");
+            }
+        }
+        System.out.println();
         System.out.println();
 
         for (int i = 0; i < height; i++) {
             for (int j = 0; j < width; j++) {
-                // Verifica se é a posição atual do mouse
-                if (i == mouseY && j == mouseX) {
-                    System.out.print("@ ");
+                boolean mouseHere = false;
+                String mouseSymbol = "";
+
+                // Verifica se há algum rato nesta posição
+                for (Mouse mouse : mice) {
+                    if (mouse.getX() == j && mouse.getY() == i && !mouse.hasReachedEnd()) {
+                        mouseHere = true;
+                        mouseSymbol = mouse.getSymbol();
+                        break; // Se há múltiplos ratos na mesma posição, mostra apenas o primeiro
+                    }
+                }
+
+                if (mouseHere) {
+                    System.out.print(mouseSymbol + " ");
                 }
                 // Posição de saída
                 else if (i == endY && j == endX) {
                     System.out.print("# ");
-                }
-                // Posição inicial (apenas para referência)
-                else if (i == startY && j == startX && !(i == mouseY && j == mouseX)) {
-                    System.out.print("* ");
                 }
                 // Parede
                 else if (matrix[i][j] == WALL) {
@@ -243,14 +178,20 @@ public class Maze {
                 matrix[y][x] == PATH;
     }
 
+    /**
+     * Verifica se uma posição é o destino
+     */
+    public boolean isEndPosition(int x, int y) {
+        return x == endX && y == endY;
+    }
+
     // Getters
     public int getWidth() { return width; }
     public int getHeight() { return height; }
-    public int getStartX() { return startX; }
-    public int getStartY() { return startY; }
     public int getEndX() { return endX; }
     public int getEndY() { return endY; }
     public int[][] getMatrix() { return matrix; }
+    public List<Mouse> getMice() { return mice; }
 
     /**
      * Exibe informações do labirinto
@@ -258,11 +199,8 @@ public class Maze {
     public void printInfo() {
         System.out.println("=== INFORMAÇÕES DO LABIRINTO ===");
         System.out.println("Dimensões: " + width + "x" + height);
-        System.out.println("🐭 Posição inicial: (" + startX + ", " + startY + ")");
         System.out.println("🏁 Destino: (" + endX + ", " + endY + ")");
-
-        int distance = Math.abs(startX - endX) + Math.abs(startY - endY);
-        System.out.println("📏 Distância Manhattan: " + distance);
+        System.out.println("🐭 Ratos no labirinto: " + mice.size());
         System.out.println();
     }
 }
