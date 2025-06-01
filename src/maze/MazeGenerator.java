@@ -134,7 +134,7 @@ public class MazeGenerator {
      */
     private void createEntranceAndExit(int[][] maze, int height, int width) {
         // Entrada: primeira linha, segunda coluna [0][1]
-        maze[0][1] = PATH;
+//        maze[0][1] = PATH;
 
         // Saída: última linha, penúltima coluna [height-1][width-2]
         maze[height - 1][width - 2] = PATH;
