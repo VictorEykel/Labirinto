@@ -1,5 +1,7 @@
 import maze.*;
 
+import java.util.Scanner;
+
 public class Main {
     public static void main(String[] args) throws InterruptedException {
         System.out.println("=== SISTEMA DE LABIRINTO COM MÚLTIPLOS RATOS ===\n");
@@ -10,9 +12,13 @@ public class Main {
         // Gera um labirinto 21x21 (tamanho maior para mais espaço)
         Maze maze = generator.generateMaze(21, 21);
 
-        int valRato = 3;
+
         int velocidadeRato = 500;
 
+        Scanner scan = new Scanner(System.in);
+
+        System.out.println("Digite a quantidade de Ratos:");
+        int valRato = scan.nextInt();
         // Adiciona múltiplos ratos ao labirinto
         maze.addMice(valRato, velocidadeRato); // Adiciona 5 ratos
 
