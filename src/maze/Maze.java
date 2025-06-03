@@ -21,6 +21,7 @@ public class Maze {
     private volatile boolean gameRunning = true;
     private ExecutorService mouseExecutor;
     private ScheduledExecutorService displayExecutor;
+    private List<Thread> mouseThreads = Collections.synchronizedList(new ArrayList<>());
 
     // Sincronização para posições dos ratos
     private final Object positionLock = new Object();
@@ -38,13 +39,16 @@ public class Maze {
         // Define posição de saída fixa
         this.endX = width - 2;
         this.endY = height - 1;
+
+        // Adiciona hook para limpeza ao encerrar
+        addShutdownHook();
     }
 
     /**
      * Adiciona um rato ao labirinto
      */
-    public void addMouse() {
-        Mouse mouse = new Mouse(mice.size(), this);
+    public void addMouse(int velocityMs) {
+        Mouse mouse = new Mouse(mice.size(), this, velocityMs);
         synchronized(mice) {
             mice.add(mouse);
         }
@@ -54,15 +58,15 @@ public class Maze {
     /**
      * Adiciona múltiplos ratos ao labirinto
      */
-    public void addMice(int count) {
+    public void addMice(int count, int velocityMs) {
         for (int i = 0; i < count; i++) {
-            addMouse();
+            addMouse(velocityMs);
         }
         System.out.println("🐭 Total de " + mice.size() + " ratos no labirinto!");
     }
 
     /**
-     * Inicia o jogo com velocidade especificada usando threads
+     * Inicia o jogo com velocidade especificada usando threads nativas
      */
     public void play(int velocityMs) {
         if (mice.isEmpty()) {
@@ -70,75 +74,21 @@ public class Maze {
             return;
         }
 
-        System.out.println("🎮 Iniciando simulação com " + mice.size() + " ratos em threads paralelas...");
-
-        // Executor para as threads dos ratos
-        mouseExecutor = Executors.newFixedThreadPool(mice.size());
-
-        // Executor para atualização da tela
-        displayExecutor = Executors.newSingleThreadScheduledExecutor();
-
-        // Inicia uma thread para cada rato
-        for (Mouse mouse : mice) {
-            mouseExecutor.submit(new MouseRunner(mouse, velocityMs));
+        // Inicia uma thread dedicada para cada rato
+        synchronized(mice) {
+            for (Mouse mouse : mice) {
+                Thread mouseThread = new Thread(mouse, "RatoThread-" + mouse.getId());
+                mouseThread.setDaemon(false); // Thread não-daemon para manter programa vivo
+                mouseThreads.add(mouseThread);
+                mouseThread.start();
+                System.out.println("Thread iniciada para rato " + mouse.getId());
+            }
         }
 
         // Thread para atualizar a exibição periodicamente
-        displayExecutor.scheduleAtFixedRate(this::updateDisplay, 0, velocityMs, TimeUnit.MILLISECONDS);
+        displayExecutor = Executors.newSingleThreadScheduledExecutor();
+        displayExecutor.scheduleAtFixedRate(this::updateDisplay, 1000, velocityMs, TimeUnit.MILLISECONDS);
 
-        System.out.println("🚀 Todas as threads dos ratos foram iniciadas!");
-    }
-
-    /**
-     * Classe interna para executar cada rato em sua própria thread
-     */
-    private class MouseRunner implements Runnable {
-        private final Mouse mouse;
-        private final int velocityMs;
-        private final Random threadRandom = new Random();
-
-        public MouseRunner(Mouse mouse, int velocityMs) {
-            this.mouse = mouse;
-            this.velocityMs = velocityMs;
-        }
-
-        @Override
-        public void run() {
-            System.out.println("🧵 Thread do rato " + mouse.getId() + " iniciada!");
-
-            while (gameRunning && !Thread.currentThread().isInterrupted()) {
-                try {
-                    // Verifica se o rato chegou ao fim
-                    if (mouse.hasReachedEnd()) {
-                        // Aguarda um tempo antes de reiniciar
-                        Thread.sleep(3000);
-                        synchronized(positionLock) {
-                            mouse.restart();
-                        }
-                        System.out.println("🔄 Rato " + mouse.getId() + " reiniciado na thread!");
-                        continue;
-                    }
-
-                    // Move o rato
-                    synchronized(positionLock) {
-                        mouse.move();
-                    }
-
-                    // Adiciona pequena variação no tempo para tornar mais realista
-                    int variation = threadRandom.nextInt(velocityMs / 4); // ±25% de variação
-                    Thread.sleep(velocityMs + variation - (velocityMs / 8));
-
-                } catch (InterruptedException e) {
-                    System.out.println("🛑 Thread do rato " + mouse.getId() + " foi interrompida");
-                    Thread.currentThread().interrupt();
-                    break;
-                } catch (Exception e) {
-                    System.err.println("❌ Erro na thread do rato " + mouse.getId() + ": " + e.getMessage());
-                }
-            }
-
-            System.out.println("🏁 Thread do rato " + mouse.getId() + " finalizou");
-        }
     }
 
     /**
@@ -149,31 +99,61 @@ public class Maze {
 
         synchronized(displayLock) {
             display();
+
+            // Verifica se todos os ratos chegaram ao destino
+            boolean allFinished = true;
+            synchronized(mice) {
+                for (Mouse mouse : mice) {
+                    if (!mouse.hasReachedEnd()) {
+                        allFinished = false;
+                        break;
+                    }
+                }
+            }
+
+            if (allFinished && !mice.isEmpty()) {
+                System.out.println("\n🎊 PARABÉNS! TODOS OS RATOS CHEGARAM AO DESTINO! 🎊");
+                System.out.println("Pressione Ctrl+C para encerrar o programa.");
+            }
         }
     }
 
     /**
-     * Para a simulação e todas as threads
+     * Para a simulação e todas as threads de forma segura
      */
     public void stop() {
-        System.out.println("🛑 Parando simulação...");
         gameRunning = false;
 
-        // Para as threads dos ratos
-        if (mouseExecutor != null && !mouseExecutor.isShutdown()) {
-            mouseExecutor.shutdownNow();
-            try {
-                if (!mouseExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
-                    System.out.println("⚠️ Algumas threads dos ratos não finalizaram no tempo esperado");
+        // Para todos os ratos
+        synchronized(mice) {
+            for (Mouse mouse : mice) {
+                mouse.stop();
+            }
+        }
+
+        // Interrompe todas as threads dos ratos
+        synchronized(mouseThreads) {
+            for (Thread thread : mouseThreads) {
+                if (thread.isAlive()) {
+                    thread.interrupt();
                 }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
             }
         }
 
         // Para a thread de exibição
         if (displayExecutor != null && !displayExecutor.isShutdown()) {
             displayExecutor.shutdownNow();
+        }
+
+        // Aguarda finalização das threads
+        synchronized(mouseThreads) {
+            for (Thread thread : mouseThreads) {
+                try {
+                    thread.join(2000); // Aguarda até 2 segundos por thread
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
 
         System.out.println("✅ Todas as threads foram finalizadas");
@@ -183,30 +163,40 @@ public class Maze {
      * Exibe o labirinto no console (thread-safe)
      */
     public void display() {
-        // Cria snapshot das posições dos ratos para evitar mudanças durante a renderização
-        List<Mouse> mouseSnapshot = new ArrayList<>();
+        // Cria snapshot das posições dos ratos para renderização segura
+        List<MouseSnapshot> activeMouses = new ArrayList<>();
+        int finishedCount = 0;
+
         synchronized(mice) {
             for (Mouse mouse : mice) {
-                if (!mouse.hasReachedEnd()) {
-                    mouseSnapshot.add(new MouseSnapshot(mouse));
+                if (mouse.hasReachedEnd()) {
+                    finishedCount++;
                 }
+                // Mostra todos os ratos, mesmo os que chegaram ao destino
+                activeMouses.add(new MouseSnapshot(mouse.getX(), mouse.getY(),
+                        mouse.getId(), mouse.getSymbol(),
+                        mouse.hasReachedEnd()));
             }
         }
 
-        // Limpa tela
-        for (int i = 0; i < 30; i++) {
-            System.out.println();
-        }
+        // Limpa tela (funciona na maioria dos terminais)
+        System.out.print("\033[2J\033[H");
 
-        System.out.println("=== LABIRINTO COM MÚLTIPLOS RATOS (THREADS) ===");
+        System.out.println("=== LABIRINTO COM MÚLTIPLOS RATOS (THREADS PARALELAS) ===");
         System.out.println("█ = Parede | · = Caminho | # = Saída");
+        System.out.println("Ratos explorando: " + (mice.size() - finishedCount) + " | Chegaram ao destino: " + finishedCount);
 
-        // Mostra informações dos ratos ativos
-        System.out.print("Ratos ativos: ");
-        for (Mouse mouse : mouseSnapshot) {
-            System.out.print(mouse.getSymbol() + "(ID:" + mouse.getId() + ") ");
+        // Mostra informações dos ratos
+        System.out.print("Status dos ratos: ");
+        for (MouseSnapshot mouse : activeMouses) {
+            if (mouse.hasReachedEnd) {
+                System.out.print(mouse.symbol + "(✓) ");
+            } else {
+                System.out.print(mouse.symbol + "(→) ");
+            }
         }
-        System.out.println(" | Total threads: " + (mouseSnapshot.size() + 1));
+        System.out.println();
+        System.out.println("Total de threads ativas: " + countActiveThreads());
         System.out.println();
 
         // Renderiza o labirinto
@@ -216,11 +206,12 @@ public class Maze {
                 String mouseSymbol = "";
 
                 // Verifica se há algum rato nesta posição
-                for (Mouse mouse : mouseSnapshot) {
-                    if (mouse.getX() == j && mouse.getY() == i) {
+                for (MouseSnapshot mouse : activeMouses) {
+                    if (mouse.x == j && mouse.y == i) {
                         mouseHere = true;
-                        mouseSymbol = mouse.getSymbol();
-                        break; // Se há múltiplos ratos na mesma posição, mostra apenas o primeiro
+                        // Se o rato chegou ao destino, mostra com destaque
+                        mouseSymbol = mouse.hasReachedEnd ? "🎯" : mouse.symbol;
+                        break;
                     }
                 }
 
@@ -246,23 +237,35 @@ public class Maze {
     }
 
     /**
+     * Conta quantas threads ainda estão ativas
+     */
+    private int countActiveThreads() {
+        int count = 0;
+        synchronized(mouseThreads) {
+            for (Thread thread : mouseThreads) {
+                if (thread.isAlive()) {
+                    count++;
+                }
+            }
+        }
+        // +1 para a thread de display
+        return count + (displayExecutor != null && !displayExecutor.isShutdown() ? 1 : 0);
+    }
+
+    /**
      * Classe auxiliar para snapshot thread-safe dos ratos
      */
-    private static class MouseSnapshot extends Mouse {
-        public MouseSnapshot(Mouse original) {
-            super(original.getId(), null); // maze não é necessário para snapshot
-            // Copia os dados necessários de forma thread-safe
-            this.setSnapshot(original.getX(), original.getY(), original.getId(),
-                    original.getSymbol(), original.hasReachedEnd());
-        }
+    private static class MouseSnapshot {
+        public final int x, y, id;
+        public final String symbol;
+        public final boolean hasReachedEnd;
 
-        private void setSnapshot(int x, int y, int id, String symbol, boolean reachedEnd) {
-            // Métodos protegidos para configurar o snapshot
+        public MouseSnapshot(int x, int y, int id, String symbol, boolean hasReachedEnd) {
             this.x = x;
             this.y = y;
             this.id = id;
             this.symbol = symbol;
-            this.hasReachedEnd = reachedEnd;
+            this.hasReachedEnd = hasReachedEnd;
         }
     }
 
@@ -284,17 +287,11 @@ public class Maze {
 
     /**
      * Verifica se há conflito de posição entre ratos (thread-safe)
+     * Permite múltiplos ratos na mesma posição para evitar bloqueios
      */
     public boolean isPositionOccupied(int x, int y, int excludeMouseId) {
-        synchronized(mice) {
-            for (Mouse mouse : mice) {
-                if (mouse.getId() != excludeMouseId &&
-                        mouse.getX() == x && mouse.getY() == y &&
-                        !mouse.hasReachedEnd()) {
-                    return true;
-                }
-            }
-        }
+        // Permitir que ratos ocupem a mesma posição temporariamente
+        // Isso evita que fiquem completamente bloqueados
         return false;
     }
 
@@ -312,26 +309,11 @@ public class Maze {
     }
 
     /**
-     * Exibe informações do labirinto
-     */
-    public void printInfo() {
-        System.out.println("=== INFORMAÇÕES DO LABIRINTO (MULTI-THREAD) ===");
-        System.out.println("Dimensões: " + width + "x" + height);
-        System.out.println("🏁 Destino: (" + endX + ", " + endY + ")");
-        synchronized(mice) {
-            System.out.println("🐭 Ratos no labirinto: " + mice.size());
-        }
-        System.out.println("🧵 Cada rato roda em sua própria thread");
-        System.out.println("⚡ Processamento paralelo ativo");
-        System.out.println();
-    }
-
-    /**
      * Adiciona shutdown hook para limpeza adequada
      */
     public void addShutdownHook() {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.out.println("\n🛑 Finalizando sistema...");
+            System.out.println("\n🛑 Encerrando sistema graciosamente...");
             stop();
         }));
     }

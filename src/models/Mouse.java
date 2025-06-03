@@ -4,45 +4,48 @@ import maze.Maze;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class Mouse {
+public class Mouse implements Runnable {
     // Atributos protegidos por sincronização
     protected volatile int x, y;
     protected volatile int id;
     protected volatile String symbol;
     protected volatile boolean hasReachedEnd = false;
+    protected volatile boolean isRunning = true;
 
     // Atributos que precisam de sincronização mais complexa
     private Maze maze;
     private Set<String> visitedPositions = Collections.synchronizedSet(new HashSet<>());
-    private Stack<int[]> pathStack = new Stack<>(); // Será sincronizado manualmente
+    private Stack<int[]> pathStack = new Stack<>();
     private Random random = new Random();
     private volatile int stuckCounter = 0;
-    private static final int MAX_STUCK_ATTEMPTS = 3;
+    private static final int MAX_STUCK_ATTEMPTS = 5;
+    private int velocityMs;
 
     // Locks para operações críticas
     private final ReentrantLock movementLock = new ReentrantLock();
     private final ReentrantLock pathLock = new ReentrantLock();
 
-    public Mouse(int id, Maze maze) {
+    public Mouse(int id, Maze maze, int velocityMs) {
         this.id = id;
         this.maze = maze;
+        this.velocityMs = velocityMs;
         // Símbolos diferentes para cada rato
         String[] symbols = {"@", "♦", "♣", "♠", "♥", "◆", "◇", "★", "☆", "●"};
         this.symbol = symbols[id % symbols.length];
-        setRandomPosition();
+        setInitialPosition();
     }
 
     /**
-     * Define uma posição inicial aleatória para este rato (thread-safe)
+     * Define uma posição inicial válida para este rato (thread-safe)
      */
-    private void setRandomPosition() {
+    private void setInitialPosition() {
         movementLock.lock();
         try {
             List<int[]> validPositions = new ArrayList<>();
 
             // Encontra todas as posições válidas
-            for (int row = 0; row < maze.getHeight(); row++) {
-                for (int col = 0; col < maze.getWidth(); col++) {
+            for (int row = 1; row < maze.getHeight() - 1; row++) {
+                for (int col = 1; col < maze.getWidth() - 1; col++) {
                     if (maze.isValidPosition(col, row) &&
                             !maze.isEndPosition(col, row) &&
                             !maze.isPositionOccupied(col, row, this.id)) {
@@ -56,14 +59,53 @@ public class Mouse {
                 int[] position = validPositions.get(randomIndex);
                 this.x = position[0];
                 this.y = position[1];
-                System.out.println("🐭 Rato " + id + " (" + symbol + ") apareceu em: (" + x + ", " + y + ") [Thread: " + Thread.currentThread().getName() + "]");
+                System.out.println("🐭 Rato " + id + " (" + symbol + ") iniciou em: (" + x + ", " + y + ")");
             } else {
+                // Posição padrão se não encontrar espaço
                 this.x = 1;
-                this.y = 0;
-                System.out.println("⚠️ Rato " + id + " usando posição padrão [Thread: " + Thread.currentThread().getName() + "]");
+                this.y = 1;
+                System.out.println("⚠️ Rato " + id + " usando posição padrão (1,1)");
             }
         } finally {
             movementLock.unlock();
+        }
+    }
+
+    /**
+     * Método principal da thread - executa o movimento contínuo do rato
+     */
+    @Override
+    public void run() {
+        System.out.println("Thread do rato " + id + " (" + symbol + ") iniciada!");
+
+        while (isRunning && !Thread.currentThread().isInterrupted()) {
+            try {
+                // Se chegou ao destino, para de se mover mas não reinicia
+                if (hasReachedEnd) {
+                    System.out.println("🎯 Rato " + id + " permanece no destino!");
+                    Thread.sleep(5000); // Espera 5 segundos antes de verificar novamente
+                    continue;
+                }
+
+                // Tenta mover o rato
+                boolean moved = move();
+
+                if (!moved) {
+                    // Se não conseguiu se mover, tenta estratégias de recuperação
+                    handleStuckSituation();
+                }
+
+                // Pausa entre movimentos com pequena variação
+                int variation = random.nextInt(velocityMs / 4);
+                Thread.sleep(velocityMs + variation - (velocityMs / 8));
+
+            } catch (InterruptedException e) {
+                System.out.println("🛑 Thread do rato " + id + " foi interrompida");
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                System.err.println("❌ Erro na thread do rato " + id + ": " + e.getMessage());
+            }
         }
     }
 
@@ -78,14 +120,13 @@ public class Mouse {
             // Verifica se chegou ao destino
             if (x == maze.getEndX() && y == maze.getEndY()) {
                 hasReachedEnd = true;
-                System.out.println("🎉 RATO " + id + " (" + symbol + ") CHEGOU AO DESTINO! [Thread: " +
-                        Thread.currentThread().getName() + "]");
+                System.out.println("🎉 RATO " + id + " (" + symbol + ") CHEGOU AO DESTINO!");
                 return true;
             }
 
             String currentPos = x + "," + y;
 
-            // Adiciona posição atual ao histórico
+            // Adiciona posição atual ao histórico se é nova
             if (!visitedPositions.contains(currentPos)) {
                 visitedPositions.add(currentPos);
                 pathLock.lock();
@@ -103,18 +144,12 @@ public class Mouse {
             if (nextMove != null) {
                 x = nextMove[0];
                 y = nextMove[1];
-                stuckCounter = 0; // Reset contador quando se move
+                stuckCounter = 0;
                 return true;
             } else {
                 stuckCounter++;
-
-                // Se ficou preso muitas vezes, tenta estratégias mais agressivas
-                if (stuckCounter >= MAX_STUCK_ATTEMPTS) {
-                    return handleStuckSituation();
-                } else {
-                    // Tenta backtracking normal primeiro
-                    return doBacktracking();
-                }
+                // Se não encontrou movimento, tenta backtracking
+                return doBacktracking();
             }
         } finally {
             movementLock.unlock();
@@ -122,45 +157,44 @@ public class Mouse {
     }
 
     /**
-     * Lida com situações onde o rato está completamente preso (thread-safe)
+     * Lida com situações onde o rato está preso (thread-safe)
      */
     private boolean handleStuckSituation() {
-        System.out.println("🔄 Rato " + id + " está explorando novo caminho... [Thread: " +
-                Thread.currentThread().getName() + "]");
+        if (stuckCounter >= MAX_STUCK_ATTEMPTS) {
+            System.out.println("🔄 Rato " + id + " explorando nova rota...");
 
-        // Estratégia 1: Limpar uma parte do histórico e tentar backtrack mais profundo
-        if (clearPartialHistory()) {
+            // Estratégia 1: Limpar parte do histórico
+            if (clearPartialHistory()) {
+                return true;
+            }
+
+            // Estratégia 2: Mover para área não explorada
+            if (moveToNearestUnexplored()) {
+                return true;
+            }
+
+            // Estratégia 3: Reset parcial do histórico
+            resetPartialExploration();
             stuckCounter = 0;
-            return true;
         }
-
-        // Estratégia 2: Buscar o caminho não explorado mais próximo
-        if (moveToNearestUnexplored()) {
-            stuckCounter = 0;
-            return true;
-        }
-
-        // Estratégia 3: Reset parcial - limpa histórico mas mantém posição
-        resetExplorationState();
-        stuckCounter = 0;
-        return true;
+        return false;
     }
 
     /**
-     * Limpa parte do histórico de posições visitadas (thread-safe)
+     * Limpa parte do histórico para permitir re-exploração (thread-safe)
      */
     private boolean clearPartialHistory() {
-        if (visitedPositions.size() <= 5) return false;
+        if (visitedPositions.size() <= 10) return false;
 
-        // Remove 30% das posições visitadas mais antigas
+        // Remove 40% das posições mais antigas
         List<String> positionsList = new ArrayList<>(visitedPositions);
-        int toRemove = Math.max(1, positionsList.size() / 3);
+        int toRemove = Math.max(5, positionsList.size() * 2 / 5);
 
-        for (int i = 0; i < toRemove; i++) {
+        for (int i = 0; i < toRemove && i < positionsList.size(); i++) {
             visitedPositions.remove(positionsList.get(i));
         }
 
-        // Tenta encontrar um movimento agora
+        // Tenta encontrar movimento após limpeza
         int[] nextMove = findNextMove();
         if (nextMove != null) {
             x = nextMove[0];
@@ -177,13 +211,11 @@ public class Mouse {
     private boolean moveToNearestUnexplored() {
         List<int[]> unexploredPositions = new ArrayList<>();
 
-        // Encontra todas as posições válidas não visitadas
-        for (int row = 0; row < maze.getHeight(); row++) {
-            for (int col = 0; col < maze.getWidth(); col++) {
+        // Encontra posições válidas não visitadas
+        for (int row = 1; row < maze.getHeight() - 1; row++) {
+            for (int col = 1; col < maze.getWidth() - 1; col++) {
                 String pos = col + "," + row;
-                if (maze.isValidPosition(col, row) &&
-                        !visitedPositions.contains(pos) &&
-                        !maze.isEndPosition(col, row)) {
+                if (maze.isValidPosition(col, row) && !visitedPositions.contains(pos)) {
                     unexploredPositions.add(new int[]{col, row});
                 }
             }
@@ -191,7 +223,7 @@ public class Mouse {
 
         if (unexploredPositions.isEmpty()) return false;
 
-        // Encontra a posição não explorada mais próxima
+        // Encontra a posição mais próxima
         int[] nearestPos = unexploredPositions.get(0);
         int minDistance = manhattanDistance(x, y, nearestPos[0], nearestPos[1]);
 
@@ -203,7 +235,7 @@ public class Mouse {
             }
         }
 
-        // Move em direção à posição não explorada mais próxima
+        // Move em direção à posição mais próxima
         return moveTowardsTarget(nearestPos[0], nearestPos[1]);
     }
 
@@ -246,24 +278,25 @@ public class Mouse {
     }
 
     /**
-     * Reset do estado de exploração mantendo a posição atual (thread-safe)
+     * Reset parcial do estado de exploração (thread-safe)
      */
-    private void resetExplorationState() {
+    private void resetPartialExploration() {
         pathLock.lock();
         try {
-            // Mantém apenas as últimas 5 posições visitadas para evitar loops imediatos
-            if (visitedPositions.size() > 5) {
+            // Mantém apenas as últimas 8 posições para evitar loops
+            if (visitedPositions.size() > 8) {
                 Set<String> recentPositions = Collections.synchronizedSet(new HashSet<>());
                 Stack<int[]> tempStack = new Stack<>();
 
-                // Preserva as 5 posições mais recentes
-                for (int i = 0; i < Math.min(5, pathStack.size()); i++) {
+                // Preserva as 8 posições mais recentes
+                int preserve = Math.min(8, pathStack.size());
+                for (int i = 0; i < preserve; i++) {
                     int[] pos = pathStack.pop();
                     tempStack.push(pos);
                     recentPositions.add(pos[0] + "," + pos[1]);
                 }
 
-                // Restaura as posições recentes
+                // Restaura apenas as posições recentes
                 pathStack.clear();
                 visitedPositions.clear();
                 while (!tempStack.isEmpty()) {
@@ -275,15 +308,13 @@ public class Mouse {
             pathLock.unlock();
         }
 
-        System.out.println("🔄 Rato " + id + " resetou exploração e continua explorando [Thread: " +
-                Thread.currentThread().getName() + "]");
+        System.out.println("🔄 Rato " + id + " resetou exploração parcial");
     }
 
     /**
-     * Encontra o próximo movimento válido (thread-safe)
+     * Encontra o próximo movimento válido usando heurística (thread-safe)
      */
     private int[] findNextMove() {
-        // Direções: Norte, Sul, Leste, Oeste
         int[][] directions = {{0, -1}, {0, 1}, {1, 0}, {-1, 0}};
         List<int[]> validMoves = new ArrayList<>();
 
@@ -300,15 +331,15 @@ public class Mouse {
         }
 
         if (!validMoves.isEmpty()) {
-            // Ordena por distância até o destino (heurística)
+            // Ordena por distância até o destino (heurística A*)
             validMoves.sort((pos1, pos2) -> {
-                int dist1 = Math.abs(pos1[0] - maze.getEndX()) + Math.abs(pos1[1] - maze.getEndY());
-                int dist2 = Math.abs(pos2[0] - maze.getEndX()) + Math.abs(pos2[1] - maze.getEndY());
+                int dist1 = manhattanDistance(pos1[0], pos1[1], maze.getEndX(), maze.getEndY());
+                int dist2 = manhattanDistance(pos2[0], pos2[1], maze.getEndX(), maze.getEndY());
                 return Integer.compare(dist1, dist2);
             });
 
-            // Adiciona um pouco de aleatoriedade para evitar que todos sigam o mesmo caminho
-            int choiceRange = Math.min(3, validMoves.size());
+            // Adiciona aleatoriedade aos 2 melhores movimentos
+            int choiceRange = Math.min(2, validMoves.size());
             return validMoves.get(random.nextInt(choiceRange));
         }
 
@@ -316,7 +347,7 @@ public class Mouse {
     }
 
     /**
-     * Implementa backtracking melhorado (thread-safe)
+     * Implementa backtracking inteligente (thread-safe)
      */
     private boolean doBacktracking() {
         pathLock.lock();
@@ -328,13 +359,13 @@ public class Mouse {
                 pathStack.pop();
             }
 
-            // Procura por uma posição anterior que ainda tenha movimentos válidos
+            // Procura posição anterior com movimentos válidos
             while (!pathStack.isEmpty()) {
                 int[] backPos = pathStack.peek();
                 int backX = backPos[0];
                 int backY = backPos[1];
 
-                // Verifica se tem movimentos não explorados desta posição
+                // Verifica se há movimentos não explorados
                 int[][] directions = {{0, -1}, {0, 1}, {1, 0}, {-1, 0}};
                 for (int[] dir : directions) {
                     int checkX = backX + dir[0];
@@ -359,21 +390,10 @@ public class Mouse {
     }
 
     /**
-     * Reinicia o rato após chegar ao destino (thread-safe)
+     * Para a execução desta thread
      */
-    public void restart() {
-        movementLock.lock();
-        pathLock.lock();
-        try {
-            visitedPositions.clear();
-            pathStack.clear();
-            hasReachedEnd = false;
-            stuckCounter = 0;
-            setRandomPosition();
-        } finally {
-            pathLock.unlock();
-            movementLock.unlock();
-        }
+    public void stop() {
+        isRunning = false;
     }
 
     // Getters thread-safe
