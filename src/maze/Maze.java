@@ -110,7 +110,7 @@ public class Maze {
             }
 
             if (allFinished && !mice.isEmpty()) {
-                System.out.println("\n🎊 PARABÉNS! TODOS OS RATOS CHEGARAM AO DESTINO! 🎊");
+                System.out.println("\n🎊 TODOS OS RATOS CHEGARAM AO DESTINO! 🎊");
                 stop();
             }
         }
@@ -280,7 +280,6 @@ public class Maze {
     public int getHeight() { return height; }
     public int getEndX() { return endX; }
     public int getEndY() { return endY; }
-    public int[][] getMatrix() { return matrix; }
 
     public List<Mouse> getMice() {
         synchronized(mice) {
@@ -293,7 +292,7 @@ public class Maze {
      */
     public void addShutdownHook() {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.out.println("\n🛑 Encerrando sistema graciosamente...");
+            System.out.println("\n🛑 Encerrando sistema...");
             stop();
         }));
     }

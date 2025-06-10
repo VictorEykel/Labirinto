@@ -1,4 +1,5 @@
 import maze.*;
+import models.Mouse;
 
 import java.util.Scanner;
 
@@ -9,8 +10,18 @@ public class Main {
         // Cria o gerador de labirinto
         MazeGenerator generator = new MazeGenerator();
 
-        // Gera um labirinto 21x21 (tamanho maior para mais espaço)
-        Maze maze = generator.generateMaze(15, 15);
+        Scanner scanL1 = new Scanner(System.in);
+        Scanner scanL2 = new Scanner(System.in);
+
+        System.out.println("Informe o tamando do labirinto");
+        System.out.printf("Largura: ");
+        int val1 = scanL1.nextInt();
+        System.out.println();
+        System.out.printf("Altura: ");
+        int val2 = scanL2.nextInt();
+
+        // Gera um labirinto com um tamanho variado onde o usuário escolhe o tamanho
+        Maze maze = generator.generateMaze(val1, val2);
 
         int velocidadeRato = 500;
 
@@ -18,8 +29,8 @@ public class Main {
 
         System.out.println("Digite a quantidade de Ratos:");
         int valRato = scan.nextInt();
-        // Adiciona múltiplos ratos ao labirinto
-        maze.addMice(valRato, velocidadeRato); // Adiciona 5 ratos
+        // Adiciona a quantidade digitada de ratos
+        maze.addMice(valRato, velocidadeRato);
 
         // Exibe o labirinto inicial
         maze.display();

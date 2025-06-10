@@ -80,7 +80,6 @@ public class Mouse implements Runnable {
             try {
                 // Se chegou ao destino, para de se mover mas não reinicia
                 if (hasReachedEnd) {
-                    System.out.println("🎯 Rato " + id + " permanece no destino!");
                     Thread.sleep(5000); // Espera 5 segundos antes de verificar novamente
                     continue;
                 }
@@ -98,7 +97,6 @@ public class Mouse implements Runnable {
                 Thread.sleep(velocityMs + variation - (velocityMs / 8));
 
             } catch (InterruptedException e) {
-                System.out.println("🛑 Thread do rato " + id + " foi interrompida");
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
@@ -110,7 +108,7 @@ public class Mouse implements Runnable {
     /**
      * Move o rato um passo em direção ao objetivo (thread-safe)
      */
-    public boolean move() {
+    public boolean move() throws InterruptedException {
         if (hasReachedEnd) return false;
 
         movementLock.lock();
