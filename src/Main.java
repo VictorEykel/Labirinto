@@ -10,8 +10,7 @@ public class Main {
         MazeGenerator generator = new MazeGenerator();
 
         // Gera um labirinto 21x21 (tamanho maior para mais espaço)
-        Maze maze = generator.generateMaze(21, 21);
-
+        Maze maze = generator.generateMaze(15, 15);
 
         int velocidadeRato = 500;
 

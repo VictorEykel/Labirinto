@@ -76,8 +76,6 @@ public class Mouse implements Runnable {
      */
     @Override
     public void run() {
-        System.out.println("Thread do rato " + id + " (" + symbol + ") iniciada!");
-
         while (isRunning && !Thread.currentThread().isInterrupted()) {
             try {
                 // Se chegou ao destino, para de se mover mas não reinicia

@@ -19,12 +19,10 @@ public class Maze {
     // Controle de múltiplos ratos com threads
     private List<Mouse> mice = Collections.synchronizedList(new ArrayList<>());
     private volatile boolean gameRunning = true;
-    private ExecutorService mouseExecutor;
     private ScheduledExecutorService displayExecutor;
     private List<Thread> mouseThreads = Collections.synchronizedList(new ArrayList<>());
 
     // Sincronização para posições dos ratos
-    private final Object positionLock = new Object();
     private final Object displayLock = new Object();
 
     /**
@@ -70,7 +68,7 @@ public class Maze {
      */
     public void play(int velocityMs) {
         if (mice.isEmpty()) {
-            System.out.println("⚠️ Adicione pelo menos um rato antes de iniciar!");
+            System.out.println("Adicione pelo menos um rato antes de iniciar!");
             return;
         }
 
@@ -113,7 +111,7 @@ public class Maze {
 
             if (allFinished && !mice.isEmpty()) {
                 System.out.println("\n🎊 PARABÉNS! TODOS OS RATOS CHEGARAM AO DESTINO! 🎊");
-                System.out.println("Pressione Ctrl+C para encerrar o programa.");
+                stop();
             }
         }
     }
@@ -180,11 +178,11 @@ public class Maze {
         }
 
         // Limpa tela (funciona na maioria dos terminais)
-        System.out.print("\033[2J\033[H");
 
-        System.out.println("=== LABIRINTO COM MÚLTIPLOS RATOS (THREADS PARALELAS) ===");
+        System.out.println("=== LABIRINTO COM MÚLTIPLOS RATOS ===");
         System.out.println("█ = Parede | · = Caminho | # = Saída");
-        System.out.println("Ratos explorando: " + (mice.size() - finishedCount) + " | Chegaram ao destino: " + finishedCount);
+        System.out.println("Ratos explorando: " + (mice.size() - finishedCount));
+        System.out.println("Chegaram ao destino: " + finishedCount);
 
         // Mostra informações dos ratos
         System.out.print("Status dos ratos: ");
@@ -192,11 +190,9 @@ public class Maze {
             if (mouse.hasReachedEnd) {
                 System.out.print(mouse.symbol + "(✓) ");
             } else {
-                System.out.print(mouse.symbol + "(→) ");
+                System.out.print(mouse.symbol + "(º) ");
             }
         }
-        System.out.println();
-        System.out.println("Total de threads ativas: " + countActiveThreads());
         System.out.println();
 
         // Renderiza o labirinto
@@ -234,22 +230,6 @@ public class Maze {
             System.out.println();
         }
         System.out.println();
-    }
-
-    /**
-     * Conta quantas threads ainda estão ativas
-     */
-    private int countActiveThreads() {
-        int count = 0;
-        synchronized(mouseThreads) {
-            for (Thread thread : mouseThreads) {
-                if (thread.isAlive()) {
-                    count++;
-                }
-            }
-        }
-        // +1 para a thread de display
-        return count + (displayExecutor != null && !displayExecutor.isShutdown() ? 1 : 0);
     }
 
     /**
